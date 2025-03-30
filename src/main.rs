@@ -10,7 +10,8 @@ use crossterm::{
 
 const QUIT_KEY: char = 'q';
 const STOP_KEY: char = 's';
-const TOGGLE_KEY: char = ' ';
+const TOGGLE_VIEW_KEY: char = 'v';
+const TOGGLE_CELL_KEY: char = ' ';
 const UP_KEY_ALT: char = 'k';
 const DOWN_KEY_ALT: char = 'j';
 const LEFT_KEY_ALT: char = 'h';
@@ -18,6 +19,8 @@ const RIGHT_KEY_ALT: char = 'l';
 
 const LIVING: char = '■';
 const DEAD: char = '□';
+
+const STATE: [char; 4] = [' ', '▀', '▄', '█'];
 
 const DIRECTIONS: [(i32, i32); 8] = [
     (-1, -1),
@@ -31,22 +34,25 @@ const DIRECTIONS: [(i32, i32); 8] = [
 ];
 
 struct Game {
-    field: Vec<Vec<char>>,
+    // true: living, false: dead
+    field: Vec<Vec<bool>>,
     width: u16,
     height: u16,
     stop: bool,
     cursor: (u16, u16),
+    detail_view: bool,
 }
 
 impl Game {
     fn try_new() -> anyhow::Result<Game> {
         let (width, height) = terminal::size()?;
         Ok(Game {
-            field: vec![vec![DEAD; width as usize]; height as usize],
+            field: vec![vec![false; width as usize]; height as usize],
             width,
             height,
             stop: true,
             cursor: (0, 0),
+            detail_view: false,
         })
     }
 
@@ -56,22 +62,47 @@ impl Game {
             stdout,
             cursor::MoveTo(0, 0),
             Print(
-                "Press 'q' to quit, 's' to stop, 'space' to toggle cell, arrow keys to move cursor"
+                "Press 'q' to quit, 's' to stop, 'v  to toggle view, 'space' to toggle cell, arrow keys to move cursor"
             )
         )?;
+
         let (width, height) = terminal::size()?;
-        for y in 1..height.min(self.height) {
-            for x in 0..width.min(self.width) {
-                queue!(
-                    stdout,
-                    cursor::MoveTo(x, y),
-                    SetForegroundColor(if self.cursor == (x, y - 1) {
-                        Color::Cyan
-                    } else {
-                        Color::Reset
-                    }),
-                    Print(self.field[y as usize - 1][x as usize])
-                )?;
+
+        if self.detail_view {
+            for y in (1..(height.min(self.height) - 1).max(1)).step_by(2) {
+                for x in 0..width.min(self.width) {
+                    let mut state = 0;
+                    for dy in 0..2 {
+                        if self.field[(y + dy) as usize - 1][x as usize] {
+                            state |= 1 << (dy);
+                        }
+                    }
+                    queue!(
+                        stdout,
+                        cursor::MoveTo(x, (y + 1) / 2),
+                        SetForegroundColor(Color::Reset),
+                        Print(STATE[state])
+                    )?;
+                }
+            }
+        } else {
+            for y in 1..height.min(self.height) {
+                for x in 0..width.min(self.width) {
+                    queue!(
+                        stdout,
+                        cursor::MoveTo(x, y),
+                        SetForegroundColor(if self.cursor == (x, y - 1) {
+                            Color::Cyan
+                        } else {
+                            Color::Reset
+                        }),
+                        Print(if self.field[y as usize - 1][x as usize] {
+                            LIVING
+                        } else {
+                            DEAD
+                        })
+                    )?;
+                }
             }
         }
 
@@ -86,7 +117,7 @@ impl Game {
             return Ok(());
         }
 
-        let mut new_field = vec![vec![DEAD; self.width.into()]; self.height.into()];
+        let mut new_field = vec![vec![false; self.width.into()]; self.height.into()];
 
         for (y, row) in new_field.iter_mut().enumerate() {
             for (x, cell) in row.iter_mut().enumerate() {
@@ -99,10 +130,10 @@ impl Game {
 
                 if current_cell_alive {
                     if live_neighbors == 2 || live_neighbors == 3 {
-                        *cell = LIVING;
+                        *cell = true;
                     }
                 } else if live_neighbors == 3 {
-                    *cell = LIVING;
+                    *cell = true;
                 }
             }
         }
@@ -125,21 +156,17 @@ impl Game {
 
     fn toggle_cell(&mut self) {
         let (x, y) = self.cursor;
-        self.field[y as usize][x as usize] = if self.field[y as usize][x as usize] == LIVING {
-            DEAD
-        } else {
-            LIVING
-        };
+        self.field[y as usize][x as usize] = !self.field[y as usize][x as usize];
     }
 
     fn is_alive_at(&self, x: i32, y: i32) -> bool {
         let nx = (x + self.width as i32) as u16 % self.width;
         let ny = (y + self.height as i32) as u16 % self.height;
-        self.field
+        *self
+            .field
             .get(ny as usize)
             .and_then(|row| row.get(nx as usize))
-            .map(|&cell| cell == LIVING)
-            .unwrap_or(false)
+            .unwrap_or(&false)
     }
 
     fn handle_input(&mut self, event: Event) -> bool {
@@ -147,7 +174,8 @@ impl Game {
             match key_event.code {
                 KeyCode::Char(QUIT_KEY) => return false, // Indicate quit
                 KeyCode::Char(STOP_KEY) => self.stop = !self.stop,
-                KeyCode::Char(TOGGLE_KEY) => self.toggle_cell(),
+                KeyCode::Char(TOGGLE_VIEW_KEY) => self.detail_view = !self.detail_view,
+                KeyCode::Char(TOGGLE_CELL_KEY) => self.toggle_cell(),
                 KeyCode::Up | KeyCode::Char(UP_KEY_ALT) => {
                     if 0 < self.cursor.1 {
                         self.cursor.1 -= 1;
@@ -184,7 +212,7 @@ fn main() -> anyhow::Result<()> {
 
     loop {
         game.update()?;
-        if crossterm::event::poll(std::time::Duration::from_millis(50))?
+        if crossterm::event::poll(std::time::Duration::from_millis(200))?
             && !game.handle_input(crossterm::event::read()?)
         {
             break;
