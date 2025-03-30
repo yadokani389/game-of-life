@@ -8,6 +8,14 @@ use crossterm::{
     terminal,
 };
 
+const QUIT_KEY: char = 'q';
+const STOP_KEY: char = 's';
+const TOGGLE_KEY: char = ' ';
+const UP_KEY_ALT: char = 'k';
+const DOWN_KEY_ALT: char = 'j';
+const LEFT_KEY_ALT: char = 'h';
+const RIGHT_KEY_ALT: char = 'l';
+
 const LIVING: char = '■';
 const DEAD: char = '□';
 
@@ -82,35 +90,18 @@ impl Game {
 
         for (y, row) in new_field.iter_mut().enumerate() {
             for (x, cell) in row.iter_mut().enumerate() {
-                let mut count = 0;
-                for &(dx, dy) in DIRECTIONS.iter() {
-                    if dx == 0 && dy == 0 {
-                        continue;
-                    }
-                    let nx = (x as i32 + dx + self.width as i32) as u16 % self.width;
-                    let ny = (y as i32 + dy + self.height as i32) as u16 % self.height;
+                let live_neighbors = DIRECTIONS
+                    .iter()
+                    .filter(|&&(dx, dy)| self.is_alive_at(x as i32 + dx, y as i32 + dy))
+                    .count();
 
-                    if self
-                        .field
-                        .get(ny as usize)
-                        .and_then(|row| row.get(nx as usize))
-                        .map(|cell| *cell == LIVING)
-                        .unwrap_or(false)
-                    {
-                        count += 1;
-                    }
-                }
-                if self
-                    .field
-                    .get(y)
-                    .and_then(|row| row.get(x))
-                    .map(|cell| *cell == LIVING)
-                    .unwrap_or(false)
-                {
-                    if count == 2 || count == 3 {
+                let current_cell_alive = self.is_alive_at(x as i32, y as i32);
+
+                if current_cell_alive {
+                    if live_neighbors == 2 || live_neighbors == 3 {
                         *cell = LIVING;
                     }
-                } else if count == 3 {
+                } else if live_neighbors == 3 {
                     *cell = LIVING;
                 }
             }
@@ -140,6 +131,48 @@ impl Game {
             LIVING
         };
     }
+
+    fn is_alive_at(&self, x: i32, y: i32) -> bool {
+        let nx = (x + self.width as i32) as u16 % self.width;
+        let ny = (y + self.height as i32) as u16 % self.height;
+        self.field
+            .get(ny as usize)
+            .and_then(|row| row.get(nx as usize))
+            .map(|&cell| cell == LIVING)
+            .unwrap_or(false)
+    }
+
+    fn handle_input(&mut self, event: Event) -> bool {
+        if let Event::Key(key_event) = event {
+            match key_event.code {
+                KeyCode::Char(QUIT_KEY) => return false, // Indicate quit
+                KeyCode::Char(STOP_KEY) => self.stop = !self.stop,
+                KeyCode::Char(TOGGLE_KEY) => self.toggle_cell(),
+                KeyCode::Up | KeyCode::Char(UP_KEY_ALT) => {
+                    if 0 < self.cursor.1 {
+                        self.cursor.1 -= 1;
+                    }
+                }
+                KeyCode::Down | KeyCode::Char(DOWN_KEY_ALT) => {
+                    if self.cursor.1 < self.height - 1 {
+                        self.cursor.1 += 1;
+                    }
+                }
+                KeyCode::Left | KeyCode::Char(LEFT_KEY_ALT) => {
+                    if 0 < self.cursor.0 {
+                        self.cursor.0 -= 1;
+                    }
+                }
+                KeyCode::Right | KeyCode::Char(RIGHT_KEY_ALT) => {
+                    if self.cursor.0 < self.width - 1 {
+                        self.cursor.0 += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+        true // Indicate continue
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -151,33 +184,10 @@ fn main() -> anyhow::Result<()> {
 
     loop {
         game.update()?;
-        if let Event::Key(event) = crossterm::event::read()? {
-            match event.code {
-                KeyCode::Char('q') => break,
-                KeyCode::Char('s') => game.stop = !game.stop,
-                KeyCode::Char(' ') => game.toggle_cell(),
-                KeyCode::Up | KeyCode::Char('k') => {
-                    if 0 < game.cursor.1 {
-                        game.cursor.1 -= 1;
-                    }
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    if game.cursor.1 < game.height - 1 {
-                        game.cursor.1 += 1;
-                    }
-                }
-                KeyCode::Left | KeyCode::Char('h') => {
-                    if 0 < game.cursor.0 {
-                        game.cursor.0 -= 1;
-                    }
-                }
-                KeyCode::Right | KeyCode::Char('l') => {
-                    if game.cursor.0 < game.width - 1 {
-                        game.cursor.0 += 1;
-                    }
-                }
-                _ => {}
-            }
+        if crossterm::event::poll(std::time::Duration::from_millis(50))?
+            && !game.handle_input(crossterm::event::read()?)
+        {
+            break;
         }
     }
 
