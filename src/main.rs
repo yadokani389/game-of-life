@@ -62,7 +62,7 @@ impl Game {
             stdout,
             cursor::MoveTo(0, 0),
             Print(
-                "Press 'q' to quit, 's' to stop, 'v  to toggle view, 'space' to toggle cell, arrow keys to move cursor"
+                "Press 'q' to quit, 's' to stop, 'v' to toggle view, 'space' to toggle cell, arrow keys to move cursor"
             )
         )?;
 
